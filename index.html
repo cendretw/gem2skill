@@ -55,7 +55,7 @@
     font-size: 12px;
     margin-top: 2px;
   }
-  input[type=text], textarea {
+  input[type=text], textarea, select {
     width: 100%;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -66,10 +66,28 @@
     background: #fffdfa;
     resize: vertical;
   }
-  input[type=text]:focus, textarea:focus {
+  select { width: auto; padding: 8px 10px; }
+  input[type=text]:focus, textarea:focus, select:focus {
     outline: none;
     border-color: var(--accent);
   }
+  .filetype-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .filetype-row label { margin: 0; }
+  .tools-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px 12px;
+    margin-top: 6px;
+  }
+  .tools-grid label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 400;
+    font-size: 13px;
+    margin: 0;
+  }
+  .tools-grid input[type=checkbox] { width: auto; margin: 0; }
   #description { min-height: 70px; }
   #gemPrompt { min-height: 320px; font-family: var(--mono); font-size: 13px; }
   pre#preview {
@@ -130,11 +148,38 @@
         <span class="hint">直接貼上 Gem 的完整 system prompt，會原樣放進 SKILL.md 內文</span>
       </label>
       <textarea id="gemPrompt" placeholder="Act as ..."></textarea>
+
+      <label>會用到的 Google Workspace 工具
+        <span class="hint">複選，選了才會加進輸出，讓觸發時知道要開哪些工具的存取權限</span>
+      </label>
+      <div class="tools-grid">
+        <label><input type="checkbox" class="tool-cb" value="Gmail"> Gmail</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Calendar"> Google 日曆</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Drive"> Google 雲端硬碟</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Docs"> Google 文件</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Sheets"> Google 試算表</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Slides"> Google 簡報</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Forms"> Google 表單</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Meet"> Google Meet</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Chat"> Google Chat</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Tasks"> Google 待辦事項</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Keep"> Google 記事</label>
+        <label><input type="checkbox" class="tool-cb" value="Google Contacts"> Google 聯絡人</label>
+      </div>
     </div>
 
     <div class="panel">
-      <label style="margin-top:0">SKILL.md 預覽</label>
+      <label style="margin-top:0">內容預覽</label>
       <pre id="preview"></pre>
+      <div class="filetype-row">
+        <label for="fileExt" style="font-weight:600; font-size:13px;">存成</label>
+        <select id="fileExt">
+          <option value=".md" selected>Markdown (.md)</option>
+          <option value=".txt">純文字 (.txt)</option>
+          <option value=".py">Python (.py)</option>
+          <option value=".csv">CSV (.csv)</option>
+        </select>
+      </div>
       <div class="actions">
         <button class="primary" id="saveBtn">另存新檔…</button>
         <button class="secondary" id="copyBtn">複製到剪貼簿</button>
@@ -150,6 +195,20 @@
   const bodyEl = document.getElementById('gemPrompt');
   const previewEl = document.getElementById('preview');
   const statusEl = document.getElementById('status');
+  const extEl = document.getElementById('fileExt');
+
+  // Metadata for every extension offered in the save dialog. All four
+  // save the same generated content — only the extension/MIME differ.
+  const EXT_META = {
+    '.md':  { description: 'Markdown',   mime: 'text/markdown' },
+    '.txt': { description: '純文字',      mime: 'text/plain' },
+    '.py':  { description: 'Python',     mime: 'text/x-python' },
+    '.csv': { description: 'CSV',        mime: 'text/csv' }
+  };
+  const ALL_TYPES = Object.entries(EXT_META).map(([ext, meta]) => ({
+    description: meta.description,
+    accept: { [meta.mime]: [ext] }
+  }));
 
   function slugify(str) {
     return (str || '')
@@ -172,17 +231,34 @@
     return '"' + escaped + '"';
   }
 
+  function yamlList(items) {
+    return items.map(i => '  - ' + yamlQuote(i)).join('\n');
+  }
+
+  function getSelectedTools() {
+    return Array.from(document.querySelectorAll('.tool-cb:checked')).map(cb => cb.value);
+  }
+
   function buildSkillMd() {
     const rawName = nameEl.value.trim();
     const slug = slugify(rawName) || 'unnamed-skill';
     const description = descEl.value.trim() || '(尚未填寫 description — 請說明這個 skill 應該在什麼情況被觸發)';
     const body = bodyEl.value.trim() || '(尚未貼上 Gem 的提示內容)';
+    const tools = getSelectedTools();
 
-    return '---\n' +
+    let frontmatter = '---\n' +
       'name: ' + slug + '\n' +
-      'description: ' + yamlQuote(description) + '\n' +
-      '---\n\n' +
-      body + '\n';
+      'description: ' + yamlQuote(description) + '\n';
+    if (tools.length) {
+      frontmatter += 'tools:\n' + yamlList(tools) + '\n';
+    }
+    frontmatter += '---\n\n';
+
+    const toolsNote = tools.length
+      ? '**使用的 Google Workspace 工具：** ' + tools.join('、') + '\n\n'
+      : '';
+
+    return frontmatter + toolsNote + body + '\n';
   }
 
   function render() {
@@ -195,6 +271,7 @@
   }
 
   [nameEl, descEl, bodyEl].forEach(el => el.addEventListener('input', render));
+  document.querySelectorAll('.tool-cb').forEach(cb => cb.addEventListener('change', render));
 
   document.getElementById('copyBtn').addEventListener('click', async () => {
     try {
@@ -206,18 +283,24 @@
   });
 
   document.getElementById('saveBtn').addEventListener('click', async () => {
-    const md = buildSkillMd();
+    const content = buildSkillMd();
     const slug = slugify(nameEl.value.trim()) || 'unnamed-skill';
-    const filename = slug + '-SKILL.md';
+    const chosenExt = extEl.value;
+    const filename = slug + (chosenExt === '.md' ? '-SKILL.md' : chosenExt);
+
+    // Put the chosen extension first so it's the default filter in the
+    // native dialog, but still offer the other three in its dropdown.
+    const typesOrdered = [chosenExt, ...Object.keys(EXT_META).filter(e => e !== chosenExt)]
+      .map(ext => ({ description: EXT_META[ext].description, accept: { [EXT_META[ext].mime]: [ext] } }));
 
     if (window.showSaveFilePicker) {
       try {
         const handle = await window.showSaveFilePicker({
           suggestedName: filename,
-          types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }]
+          types: typesOrdered
         });
         const writable = await handle.createWritable();
-        await writable.write(md);
+        await writable.write(content);
         await writable.close();
         setStatus('已儲存為 ' + (handle.name || filename) + '。', 'ok');
       } catch (err) {
@@ -226,7 +309,7 @@
         }
       }
     } else {
-      const blob = new Blob([md], { type: 'text/markdown' });
+      const blob = new Blob([content], { type: EXT_META[chosenExt].mime });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
