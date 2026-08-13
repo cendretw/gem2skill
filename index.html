@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gem → Skill 轉換器</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e5e2dc;
+    --text: #2b2b28;
+    --muted: #7a766d;
+    --accent: #c15f3c;
+    --accent-dark: #a44e30;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+    padding: 24px;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 14px 0 6px;
+  }
+  label:first-child { margin-top: 0; }
+  .hint {
+    display: block;
+    font-weight: 400;
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  input[type=text], textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text);
+    background: #fffdfa;
+    resize: vertical;
+  }
+  input[type=text]:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  #description { min-height: 70px; }
+  #gemPrompt { min-height: 320px; font-family: var(--mono); font-size: 13px; }
+  pre#preview {
+    background: #1e1e1c;
+    color: #eae7de;
+    padding: 14px;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    overflow: auto;
+    max-height: 620px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+  }
+  .actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  button {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #fff; }
+  button.primary:hover { background: var(--accent-dark); }
+  button.secondary { background: #efece5; color: var(--text); }
+  button.secondary:hover { background: #e4e0d6; }
+  #status {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+    min-height: 18px;
+  }
+  #status.ok { color: #2f7a3d; }
+  #status.err { color: #b23b2f; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Gem → Skill 轉換器</h1>
+  <p class="subtitle">貼上 Gem 的提示內容，填好名稱與觸發說明，右邊會即時組出 SKILL.md，按「另存新檔」選擇要存的資料夾。</p>
+
+  <div class="grid">
+    <div class="panel">
+      <label for="skillName">Skill 名稱
+        <span class="hint">kebab-case，例如 cloze-exercise-generator（會自動轉換格式）</span>
+      </label>
+      <input type="text" id="skillName" placeholder="my-gem-skill">
+
+      <label for="description">Description（觸發時機說明）
+        <span class="hint">寫清楚「什麼情況該用這個 skill」，這段決定 Claude 何時會自動叫用它</span>
+      </label>
+      <textarea id="description" placeholder="Use this skill whenever the user asks for ..."></textarea>
+
+      <label for="gemPrompt">Gem 原始提示 / 指令內容
+        <span class="hint">直接貼上 Gem 的完整 system prompt，會原樣放進 SKILL.md 內文</span>
+      </label>
+      <textarea id="gemPrompt" placeholder="Act as ..."></textarea>
+    </div>
+
+    <div class="panel">
+      <label style="margin-top:0">SKILL.md 預覽</label>
+      <pre id="preview"></pre>
+      <div class="actions">
+        <button class="primary" id="saveBtn">另存新檔…</button>
+        <button class="secondary" id="copyBtn">複製到剪貼簿</button>
+      </div>
+      <div id="status"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const nameEl = document.getElementById('skillName');
+  const descEl = document.getElementById('description');
+  const bodyEl = document.getElementById('gemPrompt');
+  const previewEl = document.getElementById('preview');
+  const statusEl = document.getElementById('status');
+
+  function slugify(str) {
+    return (str || '')
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9一-鿿]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-{2,}/g, '-');
+  }
+
+  // Wrap a value as a YAML double-quoted scalar so colons, quotes,
+  // and newlines in pasted text can't break the frontmatter.
+  function yamlQuote(str) {
+    const escaped = (str || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\r\n/g, '\\n')
+      .replace(/\n/g, '\\n');
+    return '"' + escaped + '"';
+  }
+
+  function buildSkillMd() {
+    const rawName = nameEl.value.trim();
+    const slug = slugify(rawName) || 'unnamed-skill';
+    const description = descEl.value.trim() || '(尚未填寫 description — 請說明這個 skill 應該在什麼情況被觸發)';
+    const body = bodyEl.value.trim() || '(尚未貼上 Gem 的提示內容)';
+
+    return '---\n' +
+      'name: ' + slug + '\n' +
+      'description: ' + yamlQuote(description) + '\n' +
+      '---\n\n' +
+      body + '\n';
+  }
+
+  function render() {
+    previewEl.textContent = buildSkillMd();
+  }
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = kind || '';
+  }
+
+  [nameEl, descEl, bodyEl].forEach(el => el.addEventListener('input', render));
+
+  document.getElementById('copyBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(buildSkillMd());
+      setStatus('已複製到剪貼簿。', 'ok');
+    } catch (err) {
+      setStatus('複製失敗：' + err.message, 'err');
+    }
+  });
+
+  document.getElementById('saveBtn').addEventListener('click', async () => {
+    const md = buildSkillMd();
+    const slug = slugify(nameEl.value.trim()) || 'unnamed-skill';
+    const filename = slug + '-SKILL.md';
+
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(md);
+        await writable.close();
+        setStatus('已儲存為 ' + (handle.name || filename) + '。', 'ok');
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          setStatus('儲存失敗：' + err.message, 'err');
+        }
+      }
+    } else {
+      const blob = new Blob([md], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus('這個瀏覽器不支援選擇資料夾，已下載到預設下載資料夾：' + filename, 'ok');
+    }
+  });
+
+  render();
+</script>
+</body>
+</html>
